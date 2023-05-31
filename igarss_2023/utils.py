@@ -59,9 +59,9 @@ def get_pair_list(lines, direction, orbit):
     stop_date = datetime(2020, 1, 1)
     smaller_scenes = scene_df.loc[(scene_df['date1'] > start_date) & (scene_df['date2'] < stop_date)]
     smaller_scenes.to_csv(f'{direction}_{orbit}_pairs_smaller.csv', index=False)
+    
 
-
-if __name__ == '__main__':
+def get_edgecumbe_insar_pairs():
     download_to_file(SCENE_LIST_URL, 'InSAR_scenes.txt')
     input_file = Path('InSAR_scenes.txt').read_text().split('\n')
     stacks = {
@@ -73,3 +73,7 @@ if __name__ == '__main__':
     for stack, (start, stop) in stacks.items():
         direction, orbit = stack.split('_')
         get_pair_list(input_file[start:stop], direction, int(orbit))
+
+
+if __name__ == '__main__':
+    get_edgecumbe_insar_pairs()
