@@ -3,6 +3,7 @@ import requests
 from pathlib import Path
 from datetime import datetime, timedelta
 import pandas as pd
+import hyp3_sdk as sdk
 
 SCENE_LIST_URL = 'https://zenodo.org/record/7151431/files/InSAR_scenes.txt'
 
@@ -42,7 +43,6 @@ def get_pair_list(lines, direction, orbit):
         rows.append([scene[0], date])
 
     scene_df = pd.DataFrame(rows, columns=['scene', 'date'])
-    # scene_df.to_csv(f'{direction}_{orbit}_scenes.csv', index=False)
 
     scene_pairs = []
     for pair in pairs:
@@ -53,13 +53,12 @@ def get_pair_list(lines, direction, orbit):
         scene_pairs.append([date1, date2, scene1, scene2])
 
     scene_df = pd.DataFrame(scene_pairs, columns=['date1', 'date2', 'scene1', 'scene2'])
-    # scene_df.to_csv(f'{direction}_{orbit}_pairs.csv', index=False)
 
     start_date = datetime(2018, 1, 1)
     stop_date = datetime(2020, 1, 1)
     smaller_scenes = scene_df.loc[(scene_df['date1'] > start_date) & (scene_df['date2'] < stop_date)]
-    smaller_scenes.to_csv(f'{direction}_{orbit}_pairs_smaller.csv', index=False)
-    
+    smaller_scenes.to_csv(f'{direction}_{orbit}_pairs.csv', index=False)
+
 
 def get_edgecumbe_insar_pairs():
     download_to_file(SCENE_LIST_URL, 'InSAR_scenes.txt')
@@ -75,5 +74,48 @@ def get_edgecumbe_insar_pairs():
         get_pair_list(input_file[start:stop], direction, int(orbit))
 
 
-if __name__ == '__main__':
+def submit_stack(pairs, hyp3_instance, base_name, water_mask=True):
+    project_name = base_name + f'_{datetime.now().strftime("%Y%m%dT%H:%M")}'
+    jobs = sdk.Batch()
+    for reference, secondary in pairs:
+        jobs += hyp3_instance.submit_insar_job(
+            reference,
+            secondary,
+            name=project_name,
+            include_dem=True,
+            include_look_vectors=True,
+            apply_water_mask=water_mask,
+        )
+    return project_name
+
+
+def download_stack(project_name, download_dir, hyp3_instance):
+    jobs = hyp3_instance.find_jobs(name=project_name)
+    statuses = [job.status_code == 'SUCCEEDED' for job in jobs]
+    if sum(statuses) != len(statuses):
+        print('Jobs are not ready, watching the download')
+        hyp3_instance.watch(jobs)
+    insar_products = jobs.download_files(download_dir)
+    insar_products = [sdk.util.extract_zipped_product(ii) for ii in insar_products]
+
+
+def create_edgecumbe_stack(stack, water_mask=False):
+    pair_list = pd.read_csv(f'{stack}.csv', parse_dates=[0, 1]).sort_values('date1').reset_index(drop=True)
+    sbas_pairs = list(zip(list(pair_list['scene1']), list(pair_list['scene2'])))
+    hyp3 = sdk.HyP3()
+    stack_dir = Path('.') / stack
+    stack_dir.mkdir(exists_ok=True)
+    project_name = submit_stack(sbas_pairs, hyp3, stack)
+    download_stack(project_name, stack_dir, hyp3)
+
+
+def main():
     get_edgecumbe_insar_pairs()
+    # create_edgecumbe_stack('descending_174', water_mask=False)
+    create_edgecumbe_stack('descending_174')
+    # create_edgecumbe_stack('ascending_79')
+    # create_edgecumbe_stack('ascending_50')
+
+
+if __name__ == '__main__':
+    main()
