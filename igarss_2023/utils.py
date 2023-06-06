@@ -2,13 +2,16 @@ import shutil
 import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import List, Union
 
 import asf_search as asf
 import hyp3_sdk as sdk
 import pandas as pd
 import requests
+from osgeo import gdal
 
 
+gdal.UseExceptions()
 SCENE_LIST_URL = 'https://zenodo.org/record/7151431/files/InSAR_scenes.txt'
 
 
@@ -106,49 +109,86 @@ def download_stack(project_name, download_dir):
     insar_products = [sdk.util.extract_zipped_product(ii) for ii in insar_products]
 
 
+def get_common_overlap(file_list: List[Union[str, Path]]) -> List[float]:
+    """Get the common overlap of  a list of GeoTIFF files
+
+    Arg:
+        file_list: a list of GeoTIFF files
+
+    Returns:
+         [ulx, uly, lrx, lry], the upper-left x, upper-left y, lower-right x, and lower-right y
+         corner coordinates of the common overlap
+    """
+
+    corners = [gdal.Info(str(dem), format='json')['cornerCoordinates'] for dem in file_list]
+
+    ulx = max(corner['upperLeft'][0] for corner in corners)
+    uly = min(corner['upperLeft'][1] for corner in corners)
+    lrx = min(corner['lowerRight'][0] for corner in corners)
+    lry = max(corner['lowerRight'][1] for corner in corners)
+    return [ulx, uly, lrx, lry]
+
+
+def clip_hyp3_products_to_common_overlap(data_dir: Union[str, Path], overlap: List[float]) -> None:
+    """Clip all GeoTIFF files to their common overlap
+
+    Args:
+        data_dir:
+            directory containing the GeoTIFF files to clip
+        overlap:
+            a list of the upper-left x, upper-left y, lower-right-x, and lower-tight y
+            corner coordinates of the common overlap
+    Returns: None
+    """
+    files_for_mintpy = ['_water_mask.tif', '_corr.tif', '_unw_phase.tif', '_dem.tif', '_lv_theta.tif', '_lv_phi.tif']
+    for extension in files_for_mintpy:
+        for file in data_dir.rglob(f'*{extension}'):
+            dst_file = file.parent / f'{file.stem}_clipped{file.suffix}'
+            gdal.Translate(destName=str(dst_file), srcDS=str(file), projWin=overlap)
+
+
 def prep_stack_for_mintpy(pairs_file, data_dir, mintpy_dir):
     roi = [6315473, 6340109, 446628, 466268]
     reference_point = [6330696, 456350]
-    mintpy_config = mintpy_dir / 'mintpy_config.cfg'
+    mintpy_config = mintpy_dir / 'mintpy_config.txt'
     _ = mintpy_config.write_text(
-        f"""
-    ##---------processor:
-    mintpy.load.processor        = hyp3
-    mintpy.plot                  = no
+        f"""##---------processor:
+mintpy.load.processor        = hyp3
+mintpy.plot                  = no
 
-    ##---------interferogram datasets:
-    mintpy.load.unwFile          = ../{data_dir}/*/*_unw_phase_clipped.tif
-    mintpy.load.corFile          = ../{data_dir}/*/*_corr_clipped.tif
+##---------interferogram datasets:
+mintpy.load.unwFile          = ../{data_dir}/*/*_unw_phase_clipped.tif
+mintpy.load.corFile          = ../{data_dir}/*/*_corr_clipped.tif
 
-    ##---------geometry datasets:
-    mintpy.load.demFile          = ../{data_dir}/*/*_dem_clipped.tif
-    mintpy.load.incAngleFile     = ../{data_dir}/*/*_lv_theta_clipped.tif
-    mintpy.load.azAngleFile      = ../{data_dir}/*/*_lv_phi_clipped.tif
-    mintpy.load.waterMaskFile    = ../{data_dir}/*/*_water_mask_clipped.tif
+##---------geometry datasets:
+mintpy.load.demFile          = ../{data_dir}/*/*_dem_clipped.tif
+mintpy.load.incAngleFile     = ../{data_dir}/*/*_lv_theta_clipped.tif
+mintpy.load.azAngleFile      = ../{data_dir}/*/*_lv_phi_clipped.tif
+mintpy.load.waterMaskFile    = ../{data_dir}/*/*_water_mask_clipped.tif
 
-    ##--------dataset geographic subset
-    mintpy.subset.lalo           = [{roi[0]}:{roi[1]}, {roi[2]}:{roi[3]}]
-    mintpy.reference.lalo        = {reference_point}
+##--------dataset geographic subset
+mintpy.subset.lalo           = [{roi[0]}:{roi[1]}, {roi[2]}:{roi[3]}]
+mintpy.reference.lalo        = {reference_point}
 
-    ##--------network selections
-    mintpy.network.coherenceBased  = yes
-    mintpy.network.minCoherence    = 0.7
+##--------network selections
+mintpy.network.coherenceBased  = yes
+mintpy.network.minCoherence    = 0.7
 
-    ##--------unwrapping error correction
-    mintpy.unwrapError.method      = no
+##--------unwrapping error correction
+mintpy.unwrapError.method      = no
 
-    ##--------troposperic phase correction
-    mintpy.troposphericDelay.method = pyaps # pyaps eventually
-    mintpy.troposphericDelay.weatherModel = ERA5
-    mintpy.troposphericDelay.weatherDir   = ../weather
+##--------troposperic phase correction
+mintpy.troposphericDelay.method = pyaps # pyaps eventually
+mintpy.troposphericDelay.weatherModel = ERA5
+mintpy.troposphericDelay.weatherDir   = ../weather
 
-    ##--------topographic phase correction
-    mintpy.topographicResidual     = yes
-    """
+##--------topographic phase correction
+mintpy.topographicResidual     = yes
+"""
     )
     shutil.copy(pairs_file, mintpy_dir / pairs_file)
-    cmd = f'smallbaselineApp.py --dir {mintpy_dir} {mintpy_config} --dostep load_data'
-    subprocess.run(cmd.split(' '), shell=True, check=True)
+    cmd = f'smallbaselineApp.py --dir {mintpy_dir} --dostep load_data {mintpy_config}'
+    subprocess.run(cmd.split(' '), check=True)
 
 
 def main():
@@ -172,19 +212,29 @@ def main():
 
         submit_stack(pair_csv, project_name, water_mask=use_mask)
         project_names.append((base_name, project_name))
-
     pd.DataFrame(project_names).to_csv('projects.txt', sep='\t', index=False, header=False)
 
-    project_names = [['descending_174_pairs.csv', 'descending_174', 'descending_174_20230605T14:01']]
+    project_names = [
+        ('descending_174_pairs.csv', 'descending_174_nomask', 'edgecumbe_descending_174_20230601T17:11'),
+        ('descending_174_pairs.csv', 'descending_174', 'descending_174_20230605T14:01'),
+        ('ascending_79_pairs.csv', 'ascending_79', 'ascending_79_20230605T14:06'),
+        ('ascending_50_pairs.csv', 'ascending_50', 'ascending_50_20230605T14:09'),
+    ]
     for pair_csv, base_name, project_name in project_names:
         data_dir = Path('.') / f'{base_name}_data'
         data_dir.mkdir(exist_ok=True)
         download_stack(project_name, data_dir)
 
-        mintpy_dir = Path('.') / f'{base_name}_data'
+        print('clipping data...')
+        files = data_dir.glob('*/*_dem.tif')
+        overlap = get_common_overlap(files)
+        clip_hyp3_products_to_common_overlap(data_dir, overlap)
+
+        mintpy_dir = Path('.') / f'{base_name}'
         mintpy_dir.mkdir(exist_ok=True)
         prep_stack_for_mintpy(pair_csv, data_dir, mintpy_dir)
-        shutil.make_archive(f'{base_name}.zip', 'zip', mintpy_dir)
+        shutil.make_archive(base_name, 'zip', mintpy_dir)
+        shutil.rmtree(data_dir)
 
 
 if __name__ == '__main__':
