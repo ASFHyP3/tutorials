@@ -1,9 +1,13 @@
-import asf_search as asf
-import requests
-from pathlib import Path
+import shutil
+import subprocess
 from datetime import datetime, timedelta
-import pandas as pd
+from pathlib import Path
+
+import asf_search as asf
 import hyp3_sdk as sdk
+import pandas as pd
+import requests
+
 
 SCENE_LIST_URL = 'https://zenodo.org/record/7151431/files/InSAR_scenes.txt'
 
@@ -57,7 +61,7 @@ def get_pair_list(lines, direction, orbit):
     start_date = datetime(2018, 1, 1)
     stop_date = datetime(2020, 1, 1)
     smaller_scenes = scene_df.loc[(scene_df['date1'] > start_date) & (scene_df['date2'] < stop_date)]
-    smaller_scenes.to_csv(f'{direction}_{orbit}_pairs.csv', index=False)
+    smaller_scenes.to_csv(f'{direction.lower()}_{orbit}_pairs.csv', index=False)
 
 
 def get_edgecumbe_insar_pairs():
@@ -74,11 +78,13 @@ def get_edgecumbe_insar_pairs():
         get_pair_list(input_file[start:stop], direction, int(orbit))
 
 
-def submit_stack(pairs, hyp3_instance, base_name, water_mask=True):
-    project_name = base_name + f'_{datetime.now().strftime("%Y%m%dT%H:%M")}'
+def submit_stack(pair_file, project_name, water_mask=True):
+    pair_list = pd.read_csv(pair_file, parse_dates=[0, 1]).sort_values('date1').reset_index(drop=True)
+    sbas_pairs = list(zip(list(pair_list['scene1']), list(pair_list['scene2'])))
+    hyp3 = sdk.HyP3()
     jobs = sdk.Batch()
-    for reference, secondary in pairs:
-        jobs += hyp3_instance.submit_insar_job(
+    for reference, secondary in sbas_pairs:
+        jobs += hyp3.submit_insar_job(
             reference,
             secondary,
             name=project_name,
@@ -89,32 +95,96 @@ def submit_stack(pairs, hyp3_instance, base_name, water_mask=True):
     return project_name
 
 
-def download_stack(project_name, download_dir, hyp3_instance):
-    jobs = hyp3_instance.find_jobs(name=project_name)
+def download_stack(project_name, download_dir):
+    hyp3 = sdk.HyP3()
+    jobs = hyp3.find_jobs(name=project_name)
     statuses = [job.status_code == 'SUCCEEDED' for job in jobs]
     if sum(statuses) != len(statuses):
-        print('Jobs are not ready, watching the download')
-        hyp3_instance.watch(jobs)
+        print('Jobs are not ready, watching the progress')
+        hyp3.watch(jobs)
     insar_products = jobs.download_files(download_dir)
     insar_products = [sdk.util.extract_zipped_product(ii) for ii in insar_products]
 
 
-def create_edgecumbe_stack(stack, water_mask=False):
-    pair_list = pd.read_csv(f'{stack}.csv', parse_dates=[0, 1]).sort_values('date1').reset_index(drop=True)
-    sbas_pairs = list(zip(list(pair_list['scene1']), list(pair_list['scene2'])))
-    hyp3 = sdk.HyP3()
-    stack_dir = Path('.') / stack
-    stack_dir.mkdir(exists_ok=True)
-    project_name = submit_stack(sbas_pairs, hyp3, stack)
-    download_stack(project_name, stack_dir, hyp3)
+def prep_stack_for_mintpy(pairs_file, data_dir, mintpy_dir):
+    roi = [6315473, 6340109, 446628, 466268]
+    reference_point = [6330696, 456350]
+    mintpy_config = mintpy_dir / 'mintpy_config.cfg'
+    _ = mintpy_config.write_text(
+        f"""
+    ##---------processor:
+    mintpy.load.processor        = hyp3
+    mintpy.plot                  = no
+
+    ##---------interferogram datasets:
+    mintpy.load.unwFile          = ../{data_dir}/*/*_unw_phase_clipped.tif
+    mintpy.load.corFile          = ../{data_dir}/*/*_corr_clipped.tif
+
+    ##---------geometry datasets:
+    mintpy.load.demFile          = ../{data_dir}/*/*_dem_clipped.tif
+    mintpy.load.incAngleFile     = ../{data_dir}/*/*_lv_theta_clipped.tif
+    mintpy.load.azAngleFile      = ../{data_dir}/*/*_lv_phi_clipped.tif
+    mintpy.load.waterMaskFile    = ../{data_dir}/*/*_water_mask_clipped.tif
+
+    ##--------dataset geographic subset
+    mintpy.subset.lalo           = [{roi[0]}:{roi[1]}, {roi[2]}:{roi[3]}]
+    mintpy.reference.lalo        = {reference_point}
+
+    ##--------network selections
+    mintpy.network.coherenceBased  = yes
+    mintpy.network.minCoherence    = 0.7
+
+    ##--------unwrapping error correction
+    mintpy.unwrapError.method      = no
+
+    ##--------troposperic phase correction
+    mintpy.troposphericDelay.method = pyaps # pyaps eventually
+    mintpy.troposphericDelay.weatherModel = ERA5
+    mintpy.troposphericDelay.weatherDir   = ../weather
+
+    ##--------topographic phase correction
+    mintpy.topographicResidual     = yes
+    """
+    )
+    shutil.copy(pairs_file, mintpy_dir / pairs_file)
+    cmd = f'smallbaselineApp.py --dir {mintpy_dir} {mintpy_config} --dostep load_data'
+    subprocess.run(cmd.split(' '), shell=True, check=True)
 
 
 def main():
     get_edgecumbe_insar_pairs()
-    # create_edgecumbe_stack('descending_174', water_mask=False)
-    create_edgecumbe_stack('descending_174')
-    # create_edgecumbe_stack('ascending_79')
-    # create_edgecumbe_stack('ascending_50')
+    stacks = [
+        ('descending_174_pairs.csv', 'descending_174_nomask'),
+        ('descending_174_pairs.csv', 'descending_174'),
+        ('ascending_79_pairs.csv', 'ascending_79'),
+        ('ascending_50_pairs.csv', 'ascending_50'),
+    ]
+
+    project_names = []
+    for pair_csv, base_name in stacks:
+        if 'nomask' in base_name
+            use_mask = True
+        else:
+            use_mask = False
+
+        project_name = base_name + f'_{datetime.now().strftime("%Y%m%dT%H:%M")}'
+        print(f'Project Name is: {project_name}')
+
+        submit_stack(pair_csv, project_name, water_mask=use_mask)
+        project_names.append((base_name, project_name))
+
+    pd.DataFrame(project_names).to_csv('projects.txt', sep='\t', index=False, header=False)
+
+    project_names = [['descending_174_pairs.csv', 'descending_174', 'descending_174_20230605T14:01']]
+    for pair_csv, base_name, project_name in project_names:
+        data_dir = Path('.') / f'{base_name}_data'
+        data_dir.mkdir(exist_ok=True)
+        download_stack(project_name, data_dir)
+
+        mintpy_dir = Path('.') / f'{base_name}_data'
+        mintpy_dir.mkdir(exist_ok=True)
+        prep_stack_for_mintpy(pair_csv, data_dir, mintpy_dir)
+        shutil.make_archive(f'{base_name}.zip', 'zip', mintpy_dir)
 
 
 if __name__ == '__main__':
