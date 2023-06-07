@@ -1,3 +1,4 @@
+import os
 import shutil
 import subprocess
 from datetime import datetime, timedelta
@@ -186,9 +187,13 @@ mintpy.troposphericDelay.weatherDir   = ../weather
 mintpy.topographicResidual     = yes
 """
     )
-    shutil.copy(pairs_file, mintpy_dir / pairs_file)
-    cmd = f'smallbaselineApp.py --dir {mintpy_dir} --dostep load_data {mintpy_config}'
+    cmd = f'smallbaselineApp.py --dir {mintpy_dir} {mintpy_config}'
     subprocess.run(cmd.split(' '), check=True)
+    files = list(mintpy_dir.glob('./*'))
+    files.remove(mintpy_dir / 'mintpy_config.txt')
+    files.remove(mintpy_dir / 'pic')
+    files.remove(mintpy_dir / 'inputs')
+    [os.unlink(file) for file in files]
 
 
 def main():
@@ -214,12 +219,6 @@ def main():
         project_names.append((base_name, project_name))
     pd.DataFrame(project_names).to_csv('projects.txt', sep='\t', index=False, header=False)
 
-    project_names = [
-        ('descending_174_pairs.csv', 'descending_174_nomask', 'edgecumbe_descending_174_20230601T17:11'),
-        ('descending_174_pairs.csv', 'descending_174', 'descending_174_20230605T14:01'),
-        ('ascending_79_pairs.csv', 'ascending_79', 'ascending_79_20230605T14:06'),
-        ('ascending_50_pairs.csv', 'ascending_50', 'ascending_50_20230605T14:09'),
-    ]
     for pair_csv, base_name, project_name in project_names:
         data_dir = Path('.') / f'{base_name}_data'
         data_dir.mkdir(exist_ok=True)
@@ -233,8 +232,10 @@ def main():
         mintpy_dir = Path('.') / f'{base_name}'
         mintpy_dir.mkdir(exist_ok=True)
         prep_stack_for_mintpy(pair_csv, data_dir, mintpy_dir)
+        shutil.copy(pair_csv, mintpy_dir / pair_csv)
         shutil.make_archive(base_name, 'zip', mintpy_dir)
         shutil.rmtree(data_dir)
+        shutil.rmtree(mintpy_dir)
 
 
 if __name__ == '__main__':
