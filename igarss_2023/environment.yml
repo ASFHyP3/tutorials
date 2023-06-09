@@ -1,0 +1,8 @@
+name: insar_analysis
+channels:
+  - conda-forge
+dependencies:
+  - gdal
+  - asf_search
+  - hyp3_sdk
+  - hyp3lib=1.4.1
