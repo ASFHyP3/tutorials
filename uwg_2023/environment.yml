@@ -1,0 +1,17 @@
+name: uwg-demo
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python>=3.9
+  - numpy
+  - pip
+  - isce2>=2.6.3
+  - dem_stitcher>=2.4.0
+  - rasterio
+  - shapely
+  - jinja2
+  - asf_search>=6.4.0
+  - hyp3_sdk
+  # For running
+  - hyp3lib>=1.6,<2
