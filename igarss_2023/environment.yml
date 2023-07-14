@@ -3,6 +3,14 @@ channels:
   - conda-forge
 dependencies:
   - gdal
+  - ogr
+  - asf_tools
   - asf_search
   - hyp3_sdk
   - hyp3lib=1.4.1
+  - netCDF4
+  - bottleneck
+  - xarray
+  - rioxarray
+  - numpy
+  - matplotlib
