@@ -1,0 +1,22 @@
+name: opera_rtc
+channels:
+  - conda-forge
+dependencies:
+  - asf_search
+  - bottleneck
+  - dask
+  - gdal
+  - geopandas
+  - hyp3_sdk
+  - hyp3lib=1.4.1
+  - ipympl
+  - ipywidgets<8.0.0
+  - jupyter
+  - matplotlib
+  - netCDF4
+  - numpy
+  - pip
+  - rioxarray
+  - xarray
+  - pip:
+    - dem_stitcher
