@@ -1,0 +1,11 @@
+name: opera_rtc
+channels:
+  - conda-forge
+dependencies:
+  - asf_search>=6.7.0
+  - gdal
+  - geopandas
+  - jupyter
+  - matplotlib
+  - numpy
+  - pip
