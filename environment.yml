@@ -4,7 +4,9 @@ channels:
 dependencies:
   - asf_search>=6.7.0
   - gdal
+  - ipympl
+  - ipywidgets<8.0.0
   - jupyter
   - matplotlib
   - pip
-  - xarray
+  - rasterio
