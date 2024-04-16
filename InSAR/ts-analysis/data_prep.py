@@ -28,16 +28,16 @@ def download_to_file(url, filename):
 def get_pair_list(lines, direction, orbit):
     pairs = [pair.split('_') for pair in lines]
     dates = sorted(list({datetime.strptime(item, '%Y%m%d') for sublist in pairs for item in sublist}))
-    direction = asf.ASCENDING if direction == 'ascending' else asf.DESCENDING
+    direction = asf.FLIGHT_DIRECTION.ASCENDING if direction == 'ascending' else asf.FLIGHT_DIRECTION.DESCENDING
     date_pre = (min(dates) - timedelta(days=1)).strftime('%Y-%m-%d')
     date_post = (max(dates) + timedelta(days=1)).strftime('%Y-%m-%d')
     search_results = asf.geo_search(
-        platform=asf.SENTINEL1,
+        platform=asf.DATASET.SENTINEL1,
         intersectsWith='POINT(-135.7525 57.0524)',
         start=date_pre,
         end=date_post,
-        processingLevel=asf.SLC,
-        beamMode=asf.IW,
+        processingLevel=asf.PRODUCT_TYPE.SLC,
+        beamMode=asf.BEAMMODE.IW,
         flightDirection=direction,
         relativeOrbit=orbit,
     )
@@ -207,7 +207,7 @@ def main():
 
     project_names = []
     for pair_csv, base_name in stacks:
-        if 'nomask' in base_name
+        if 'nomask' in base_name:
             use_mask = True
         else:
             use_mask = False
@@ -239,4 +239,5 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    # main()
+    get_edgecumbe_insar_pairs()
