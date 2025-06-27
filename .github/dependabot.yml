@@ -11,3 +11,7 @@ updates:
       interval: weekly
     labels:
       - bumpless
+    groups:
+      github-actions-deps:
+        patterns:
+          - "*"
